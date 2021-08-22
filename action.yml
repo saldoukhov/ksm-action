@@ -1,13 +1,12 @@
-name: 'Hello World'
-description: 'Greet someone and record the time'
+name: 'Keeper Secrets Manager Github Action'
+description: 'A GitHub Action to consume secrets from Keeper'
 inputs:
-  who-to-greet:  # id of input
-    description: 'Who to greet'
+  keeper-secret-config:
+    description: 'Keeper Secrets Manager configuration json'
     required: true
-    default: 'World'
 outputs:
-  time: # id of output
-    description: 'The time we greeted you'
+  secret:
+    description: 'The KSM secret'
 runs:
   using: 'node12'
   main: 'dist/index.js'
