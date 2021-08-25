@@ -1336,7 +1336,7 @@ exports.checkBypass = checkBypass;
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
-/* Version: 16.0.12 - August 12, 2021 18:57:23 */
+/* Version: 16.0.13 - August 25, 2021 23:29:11 */
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
@@ -1396,6 +1396,69 @@ function connectPlatform(p) {
     exports.platform = p;
 }
 exports.platform = void 0;
+const loadJsonConfig = (config) => {
+    return inMemoryStorage(JSON.parse(config));
+};
+const inMemoryStorage = (storage) => {
+    const getValue = (key) => {
+        const keyParts = key.split('/');
+        let obj = storage;
+        for (const part of keyParts) {
+            obj = obj[part];
+            if (!obj) {
+                return undefined;
+            }
+        }
+        return obj.toString();
+    };
+    const saveValue = (key, value) => {
+        const keyParts = key.split('/');
+        let obj = storage;
+        for (const part of keyParts.slice(0, -1)) {
+            if (!obj[part]) {
+                obj[part] = {};
+            }
+            obj = obj[part];
+        }
+        obj[keyParts.slice(-1)[0]] = value;
+    };
+    const clearValue = (key) => {
+        const keyParts = key.split('/');
+        let obj = storage;
+        for (const part of keyParts.slice(0, -1)) {
+            if (!obj[part]) {
+                obj[part] = {};
+            }
+            obj = obj[part];
+        }
+        delete obj[keyParts.slice(-1)[0]];
+    };
+    return {
+        getString: key => Promise.resolve(getValue(key)),
+        saveString: (key, value) => {
+            saveValue(key, value);
+            return Promise.resolve();
+        },
+        getBytes: key => {
+            const bytesString = getValue(key);
+            if (bytesString) {
+                return Promise.resolve(exports.platform.base64ToBytes(bytesString));
+            }
+            else {
+                return Promise.resolve(undefined);
+            }
+        },
+        saveBytes: (key, value) => {
+            const bytesString = exports.platform.bytesToBase64(value);
+            saveValue(key, bytesString);
+            return Promise.resolve();
+        },
+        delete: (key) => {
+            clearValue(key);
+            return Promise.resolve();
+        }
+    };
+};
 
 const webSafe64 = (source) => source.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const webSafe64ToRegular = (source) => source.replace(/-/g, '+').replace(/_/g, '/') + '=='.substring(0, (3 * source.length) % 4);
@@ -1403,7 +1466,7 @@ const webSafe64ToBytes = (source) => exports.platform.base64ToBytes(webSafe64ToR
 const webSafe64FromBytes = (source) => webSafe64(exports.platform.bytesToBase64(source));
 // extracts public raw from private key for prime256v1 curve in der/pkcs8
 // privateKey: key.slice(36, 68)
-const privateDerToPublicRaw = (key) => key.slice(73);
+const privateDerToPublicRaw = (key) => key.slice(-65);
 
 const bytesToBase64 = (data) => Buffer.from(data).toString('base64');
 const base64ToBytes = (data) => Buffer.from(data, 'base64');
@@ -1547,9 +1610,9 @@ const get = (url, headers) => new Promise((resolve, reject) => {
     get.on('error', reject);
     get.end();
 });
-const post = (url, payload, headers) => new Promise((resolve, reject) => {
+const post = (url, payload, headers, allowUnverifiedCertificate) => new Promise((resolve, reject) => {
     const options = {
-        rejectUnauthorized: false
+        rejectUnauthorized: !allowUnverifiedCertificate
     };
     const post = https.request(url, Object.assign(Object.assign({ method: 'post' }, options), { headers: Object.assign({ 'Content-Type': 'application/octet-stream', 'Content-Length': payload.length, 'User-Agent': `Node/${process.version}` }, headers) }), (res) => {
         fetchData(res, resolve);
@@ -1579,7 +1642,7 @@ const nodePlatform = {
     post: post
 };
 
-let packageVersion = '16.0.12';
+let packageVersion = '16.0.13';
 const KEY_HOSTNAME = 'hostname'; // base url for the Secrets Manager service
 const KEY_SERVER_PUBIC_KEY_ID = 'serverPublicKeyId';
 const KEY_CLIENT_ID = 'clientId';
@@ -1640,15 +1703,16 @@ const prepareUpdatePayload = (storage, record) => __awaiter(void 0, void 0, void
         clientVersion: 'ms' + packageVersion,
         clientId: clientId,
         recordUid: record.recordUid,
-        data: webSafe64FromBytes(encryptedRecord)
+        data: webSafe64FromBytes(encryptedRecord),
+        revision: record.revision
     };
 });
-const postFunction = (url, transmissionKey, payload) => __awaiter(void 0, void 0, void 0, function* () {
+const postFunction = (url, transmissionKey, payload, allowUnverifiedCertificate) => __awaiter(void 0, void 0, void 0, function* () {
     return exports.platform.post(url, payload.payload, {
         PublicKeyId: transmissionKey.publicKeyId.toString(),
         TransmissionKey: exports.platform.bytesToBase64(transmissionKey.encryptedKey),
         Authorization: `Signature ${exports.platform.bytesToBase64(payload.signature)}`
-    });
+    }, allowUnverifiedCertificate);
 });
 const generateTransmissionKey = (storage) => __awaiter(void 0, void 0, void 0, function* () {
     const transmissionKey = exports.platform.getRandomBytes(32);
@@ -1681,7 +1745,7 @@ const postQuery = (options, path, payload) => __awaiter(void 0, void 0, void 0, 
     while (true) {
         const transmissionKey = yield generateTransmissionKey(options.storage);
         const encryptedPayload = yield encryptAndSignPayload(options.storage, transmissionKey, payload);
-        const response = yield (options.queryFunction || postFunction)(url, transmissionKey, encryptedPayload);
+        const response = yield (options.queryFunction || postFunction)(url, transmissionKey, encryptedPayload, options.allowUnverifiedCertificate);
         if (response.statusCode !== 200) {
             const errorMessage = exports.platform.bytesToString(response.data.slice(0, 1000));
             try {
@@ -1704,7 +1768,8 @@ const decryptRecord = (record) => __awaiter(void 0, void 0, void 0, function* ()
     const decryptedRecord = yield exports.platform.decrypt(exports.platform.base64ToBytes(record.data), record.recordUid);
     const keeperRecord = {
         recordUid: record.recordUid,
-        data: JSON.parse(exports.platform.bytesToString(decryptedRecord))
+        data: JSON.parse(exports.platform.bytesToString(decryptedRecord)),
+        revision: record.revision
     };
     if (record.files) {
         keeperRecord.files = [];
@@ -1813,72 +1878,32 @@ const localConfigStorage = (configName) => {
             return {};
         }
     };
-    const storage = readStorage();
+    const storageData = readStorage();
+    const storage = inMemoryStorage(storageData);
     const saveStorage = (storage) => {
         if (!configName) {
             return;
         }
-        fs__namespace.writeFileSync(configName, JSON.stringify(storage, null, 2));
-    };
-    const getValue = (key) => {
-        const keyParts = key.split('/');
-        let obj = storage;
-        for (const part of keyParts) {
-            obj = obj[part];
-            if (!obj) {
-                return undefined;
-            }
-        }
-        return obj.toString();
-    };
-    const saveValue = (key, value) => {
-        const keyParts = key.split('/');
-        let obj = storage;
-        for (const part of keyParts.slice(0, -1)) {
-            if (!obj[part]) {
-                obj[part] = {};
-            }
-            obj = obj[part];
-        }
-        obj[keyParts.slice(-1)[0]] = value;
-        saveStorage(storage);
-    };
-    const clearValue = (key) => {
-        const keyParts = key.split('/');
-        let obj = storage;
-        for (const part of keyParts.slice(0, -1)) {
-            if (!obj[part]) {
-                obj[part] = {};
-            }
-            obj = obj[part];
-        }
-        delete obj[keyParts.slice(-1)[0]];
-        saveStorage(storage);
+        fs__namespace.writeFileSync(configName, JSON.stringify(storageData, null, 2));
     };
     return {
-        getString: key => Promise.resolve(getValue(key)),
-        saveString: (key, value) => {
-            saveValue(key, value);
+        getString: storage.getString,
+        saveString: (key, value) => __awaiter(void 0, void 0, void 0, function* () {
+            yield storage.saveString(key, value);
+            saveStorage();
             return Promise.resolve();
-        },
-        getBytes: key => {
-            const bytesString = getValue(key);
-            if (bytesString) {
-                return Promise.resolve(exports.platform.base64ToBytes(bytesString));
-            }
-            else {
-                return Promise.resolve(undefined);
-            }
-        },
-        saveBytes: (key, value) => {
-            const bytesString = exports.platform.bytesToBase64(value);
-            saveValue(key, bytesString);
+        }),
+        getBytes: storage.getBytes,
+        saveBytes: (key, value) => __awaiter(void 0, void 0, void 0, function* () {
+            yield storage.saveBytes(key, value);
+            saveStorage();
             return Promise.resolve();
-        },
-        delete: (key) => {
-            clearValue(key);
+        }),
+        delete: (key) => __awaiter(void 0, void 0, void 0, function* () {
+            yield storage.delete(key);
+            saveStorage();
             return Promise.resolve();
-        }
+        })
     };
 };
 const cachingPostFunction = (url, transmissionKey, payload) => __awaiter(void 0, void 0, void 0, function* () {
@@ -1922,8 +1947,10 @@ exports.downloadThumbnail = downloadThumbnail;
 exports.generateTransmissionKey = generateTransmissionKey;
 exports.getClientId = getClientId;
 exports.getSecrets = getSecrets;
+exports.inMemoryStorage = inMemoryStorage;
 exports.initialize = initialize;
 exports.initializeStorage = initializeStorage;
+exports.loadJsonConfig = loadJsonConfig;
 exports.localConfigStorage = localConfigStorage;
 exports.updateSecret = updateSecret;
 //# sourceMappingURL=index.cjs.js.map
@@ -6925,18 +6952,19 @@ const github = __nccwpck_require__(438);
 
 const {
     getSecrets,
-    localConfigStorage
+    loadJsonConfig
 } = __nccwpck_require__(13)
 
-const getKeeperRecords = async () => {
-    const storage = localConfigStorage("config.json")
+const getKeeperRecords = async (configJson) => {
+    const storage = loadJsonConfig(configJson)
     const {records} = await getSecrets({storage: storage})
+    return records[0]
 }
 
 try {
     const config = core.getInput('keeper-secret-config');
     console.log(`Config: ${config}`);
-    getKeeperRecords().then(x => core.setOutput("secret", x[0]))
+    getKeeperRecords(config).then(x => core.setOutput("secret", x[0]))
     // Get the JSON webhook payload for the event that triggered the workflow
     // const payload = JSON.stringify(github.context.payload, undefined, 2)
     // console.log(`The event payload: ${payload}`);
