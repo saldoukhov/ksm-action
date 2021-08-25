@@ -15,6 +15,9 @@ const getKeeperRecords = async (configJson) => {
 try {
     const config = core.getInput('keeper-secret-config');
     console.log(`Config: ${config}`);
+    console.log(`Config Length: ${config.length}`);
+    const configObj = JSON.parse(config)
+    console.log('Config parsed:', configObj);
     getKeeperRecords(config).then(x => core.setOutput("secret", x[0]))
     // Get the JSON webhook payload for the event that triggered the workflow
     // const payload = JSON.stringify(github.context.payload, undefined, 2)
