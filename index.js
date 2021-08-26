@@ -13,7 +13,7 @@ async function run() {
         const storage = loadJsonConfig(configJson)
         const {records} = await getSecrets({storage: storage})
         const record = records.find(x => x.recordUid === 'BediNKCMG21ztm5xGYgNww')
-        const value = record.data.fields.find(x => x.type === 'password')
+        const value = record.data.fields.find(x => x.type === 'password').value[0]
         console.log(value)
         core.setOutput("secret", value)
     } catch (error) {
