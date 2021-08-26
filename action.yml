@@ -4,6 +4,9 @@ inputs:
   keeper-secret-config:
     description: 'Keeper Secrets Manager configuration json'
     required: true
+  secrets:
+    description: 'A list of secrets to retrieve from Keeper Vault'
+    required: true
 outputs:
   secret:
     description: 'The KSM secret'
