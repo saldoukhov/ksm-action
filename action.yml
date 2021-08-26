@@ -8,5 +8,5 @@ outputs:
   secret:
     description: 'The KSM secret'
 runs:
-  using: 'node12'
+  using: node12
   main: 'dist/index.js'
